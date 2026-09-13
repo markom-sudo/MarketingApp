@@ -51,6 +51,11 @@
     opacity:0;transform:translateY(4px);
     animation:splashTagIn .5s ease .35s forwards;
   }
+  .splash-status{
+    font-size:11.5px;font-weight:500;color:rgba(255,255,255,.55);letter-spacing:.3px;
+    margin-top:2px;min-height:14px;
+    opacity:0;animation:splashTagIn .5s ease .5s forwards;
+  }
   .splash-dot{
     width:6px;height:6px;border-radius:50%;background:rgba(255,255,255,.55);
     animation:splashPulse 1.1s ease-in-out infinite;
@@ -78,10 +83,17 @@
   .tool-frame{position:absolute;inset:0;width:100%;height:100%;border:none;background:#fff;}
 
   .frame-loading{
-    position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;
     color:var(--text-2);font-size:13px;background:#fff;
+    opacity:1;transition:opacity var(--morph);
   }
-  .frame-wrap.loaded .frame-loading{display:none;}
+  .frame-wrap.loaded .frame-loading{opacity:0;pointer-events:none;}
+  .spinner{
+    width:22px;height:22px;border-radius:50%;
+    border:2.5px solid var(--border);border-top-color:var(--brand);
+    animation:spin .7s linear infinite;
+  }
+  @keyframes spin{to{transform:rotate(360deg);}}
 
   /* ================= TAB BAR ================= */
   #tabbar{
@@ -117,18 +129,19 @@
   <div class="splash-mark">ELITECH</div>
   <div class="splash-tag">Marketing</div>
   <div class="splash-dot"></div>
+  <div class="splash-status" id="splashStatus">Memuat katalog…</div>
 </div>
 
 <div id="app">
   <div id="content">
     <div class="frame-wrap active" data-tool="katalog">
-      <div class="frame-loading">Memuat Katalog Produk…</div>
+      <div class="frame-loading"><div class="spinner"></div>Memuat Katalog Produk…</div>
     </div>
     <div class="frame-wrap" data-tool="populasi">
-      <div class="frame-loading">Memuat Populasi Penjualan…</div>
+      <div class="frame-loading"><div class="spinner"></div>Memuat Populasi Penjualan…</div>
     </div>
     <div class="frame-wrap" data-tool="peta">
-      <div class="frame-loading">Memuat Peta Distributor…</div>
+      <div class="frame-loading"><div class="spinner"></div>Memuat Peta Distributor…</div>
     </div>
   </div>
 
@@ -156,16 +169,24 @@
     populasi: 'https://markom-sudo.github.io/Populasi/',
     peta:     'https://markom-sudo.github.io/PetaDistributor/index.html',
   };
-  const TAB_ORDER = ['katalog', 'populasi', 'peta'];
+
+  // Batas aman kalau sinyal "ready" dari suatu tool tidak pernah datang
+  // (lupa tempel kode postMessage-nya, error sebelum sempat kirim, dll) --
+  // supaya placeholder "Memuat..." / splash tidak nyangkut selamanya.
+  const READY_FALLBACK_MS = 8000;
+  const MIN_SPLASH_MS = 700; // splash tetap tampil minimal segini walau ready-nya lebih cepat, biar tidak "kedip"
 
   const wraps = {};
   document.querySelectorAll('.frame-wrap').forEach(w => wraps[w.dataset.tool] = w);
   const tabs = Array.from(document.querySelectorAll('.tab-btn'));
   const indicator = document.getElementById('tabIndicator');
+  const splashStatus = document.getElementById('splashStatus');
   let currentTool = 'katalog';
+  const toolReady = { katalog: false, populasi: false, peta: false };
+  const splashStart = Date.now();
+  let splashRevealed = false;
 
   function moveIndicator(btn) {
-    // digeser persis ke tengah tombol yang aktif, disesuaikan lebar tab bar apa pun ukuran layarnya
     const barRect = btn.parentElement.getBoundingClientRect();
     const btnRect = btn.getBoundingClientRect();
     const x = (btnRect.left - barRect.left) + (btnRect.width - indicator.offsetWidth) / 2;
@@ -179,9 +200,26 @@
     iframe.className = 'tool-frame';
     iframe.src = TOOL_URLS[name];
     iframe.title = name;
-    iframe.addEventListener('load', () => wrap.classList.add('loaded'));
     wrap.appendChild(iframe);
+    setTimeout(() => markReady(name), READY_FALLBACK_MS);
   }
+
+  // Dipanggil saat tool mengirim postMessage({ __elitechReady: 'nama' }),
+  // atau saat fallback timeout tercapai.
+  function markReady(name) {
+    if (toolReady[name]) return;
+    toolReady[name] = true;
+    const wrap = wraps[name];
+    if (wrap) wrap.classList.add('loaded');
+    if (name === 'katalog') revealApp();
+  }
+
+  window.addEventListener('message', (event) => {
+    const data = event.data;
+    if (data && typeof data.__elitechReady === 'string') {
+      markReady(data.__elitechReady);
+    }
+  });
 
   function openTool(name) {
     if (name === currentTool && wraps[name].querySelector('iframe')) return;
@@ -193,7 +231,6 @@
       if (active) moveIndicator(t);
     });
 
-    // cross-fade: yang lama turun z-index & fade out, yang baru naik & fade in
     Object.entries(wraps).forEach(([key, wrap]) => {
       wrap.classList.toggle('active', key === name);
     });
@@ -208,10 +245,9 @@
   });
 
   /* ================= Splash → App reveal ================= */
-  const MIN_SPLASH_MS = 700; // splash tetap tampil minimal segini walau load-nya lebih cepat, biar tidak "kedip"
-  const splashStart = Date.now();
-
   function revealApp() {
+    if (splashRevealed) return;
+    splashRevealed = true;
     const elapsed = Date.now() - splashStart;
     const wait = Math.max(0, MIN_SPLASH_MS - elapsed);
     setTimeout(() => {
@@ -221,12 +257,14 @@
     }, wait);
   }
 
+  // Kalau fallback yang mentrigger reveal (bukan sinyal ready asli), ganti teks
+  // status splash biar jujur -- bukan pura-pura semua baik-baik saja.
+  setTimeout(() => {
+    if (!toolReady.katalog) splashStatus.textContent = 'Memuat lebih lama dari biasanya…';
+  }, 3000);
+
   ensureFrame('katalog');
   moveIndicator(tabs[0]);
-  const firstFrame = wraps.katalog.querySelector('iframe');
-  firstFrame.addEventListener('load', revealApp);
-  // jaga-jaga: kalau load event iframe gagal ke-trigger (edge case browser tertentu), splash tetap tidak nyangkut selamanya
-  setTimeout(revealApp, 4000);
 </script>
 </body>
 </html>
