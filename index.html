@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Marketing Elitech</title>
+<meta name="theme-color" content="#364fab">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Marketing Elitech">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --brand:#364fab;
+    --brand-fg:#ffffff;
+    --surface:#f5f6f9;
+    --border:#e6e8ee;
+    --text:#14151a;
+    --text-2:#6b7280;
+    --tabbar-h:64px;
+    --safe-b:env(safe-area-inset-bottom, 0px);
+  }
+  *{box-sizing:border-box;}
+  html,body{
+    margin:0;padding:0;height:100%;overflow:hidden; /* shell sendiri yang atur scroll, bukan tiap tool */
+    font-family:'Inter',-apple-system,'Segoe UI',Roboto,sans-serif;background:#fff;color:var(--text);
+  }
+
+  /* ---------- Area konten: 1 iframe per tool, cuma 1 yang terlihat ---------- */
+  #content{
+    position:fixed;top:0;left:0;right:0;
+    bottom:calc(var(--tabbar-h) + var(--safe-b));
+  }
+  .tool-frame{
+    position:absolute;inset:0;width:100%;height:100%;border:none;
+    display:none; /* default semua tersembunyi, JS yang buka salah satunya */
+    background:#fff;
+  }
+  .tool-frame.active{display:block;}
+
+  /* Placeholder saat iframe belum pernah dibuka (belum di-load sama sekali) */
+  .frame-wrap{position:absolute;inset:0;display:none;}
+  .frame-wrap.active{display:block;}
+
+  /* ---------- Bottom tab bar ---------- */
+  #tabbar{
+    position:fixed;left:0;right:0;bottom:0;height:calc(var(--tabbar-h) + var(--safe-b));
+    padding-bottom:var(--safe-b);
+    display:flex;background:#ffffff;border-top:1px solid var(--border);
+    box-shadow:0 -2px 10px rgba(20,21,26,0.04);
+    z-index:10;
+  }
+  .tab-btn{
+    flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
+    color:var(--text-2);background:none;border:none;cursor:pointer;font-family:inherit;
+    padding:6px 4px 0;height:var(--tabbar-h);
+  }
+  .tab-btn svg{width:23px;height:23px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;transition:transform .2s;}
+  .tab-btn span{font-size:11px;font-weight:500;}
+  .tab-btn.active{color:var(--brand);}
+  .tab-btn.active svg{transform:translateY(-1px) scale(1.05);}
+
+  /* Loading state sederhana sebelum iframe pertama kali selesai load */
+  .frame-loading{
+    position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    color:var(--text-2);font-size:13px;background:#fff;
+  }
+  .frame-wrap.loaded .frame-loading{display:none;}
+</style>
+</head>
+<body>
+
+<div id="content">
+  <div class="frame-wrap active" data-tool="katalog">
+    <div class="frame-loading">Memuat Katalog Produk…</div>
+  </div>
+  <div class="frame-wrap" data-tool="populasi">
+    <div class="frame-loading">Memuat Populasi Penjualan…</div>
+  </div>
+  <div class="frame-wrap" data-tool="peta">
+    <div class="frame-loading">Memuat Peta Distributor…</div>
+  </div>
+</div>
+
+<nav id="tabbar">
+  <button class="tab-btn active" data-tool="katalog">
+    <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+    <span>Katalog</span>
+  </button>
+  <button class="tab-btn" data-tool="populasi">
+    <svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg>
+    <span>Populasi</span>
+  </button>
+  <button class="tab-btn" data-tool="peta">
+    <svg viewBox="0 0 24 24"><path d="M9 20l-6-3V4l6 3 6-3 6 3v13l-6-3-6 3z"/><path d="M9 4v13M15 7v13"/></svg>
+    <span>Peta</span>
+  </button>
+</nav>
+
+<script>
+  // GANTI dengan URL GitHub Pages masing-masing tool kalau berbeda dari ini.
+  const TOOL_URLS = {
+    katalog:  'https://markom-sudo.github.io/product/index.html',
+    populasi: 'https://markom-sudo.github.io/Populasi/',
+    peta:     'https://markom-sudo.github.io/PetaDistributor/index.html',
+  };
+
+  const wraps = {};
+  document.querySelectorAll('.frame-wrap').forEach(w => wraps[w.dataset.tool] = w);
+  const tabs = document.querySelectorAll('.tab-btn');
+
+  function openTool(name) {
+    tabs.forEach(t => t.classList.toggle('active', t.dataset.tool === name));
+    Object.entries(wraps).forEach(([key, wrap]) => wrap.classList.toggle('active', key === name));
+
+    // Lazy-load: iframe baru dibuat & di-src saat tab dibuka PERTAMA KALI.
+    // Ini penting supaya buka app tidak langsung memanggil 3 backend GAS +
+    // data peta (geojson) sekaligus di awal -- baru dipanggil kalau memang dibuka.
+    const wrap = wraps[name];
+    if (!wrap.querySelector('iframe')) {
+      const iframe = document.createElement('iframe');
+      iframe.className = 'tool-frame active';
+      iframe.src = TOOL_URLS[name];
+      iframe.title = name;
+      iframe.addEventListener('load', () => wrap.classList.add('loaded'));
+      wrap.appendChild(iframe);
+    }
+  }
+
+  tabs.forEach(btn => btn.addEventListener('click', () => openTool(btn.dataset.tool)));
+
+  // Tab pertama (Katalog) di-load langsung saat shell dibuka.
+  openTool('katalog');
+</script>
+</body>
+</html>
