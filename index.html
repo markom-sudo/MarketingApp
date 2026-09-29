@@ -170,8 +170,11 @@
     peta:     'https://markom-sudo.github.io/PetaDistributor/index.html',
   };
 
+  // Batas aman kalau sinyal "ready" dari suatu tool tidak pernah datang
+  // (lupa tempel kode postMessage-nya, error sebelum sempat kirim, dll) --
+  // supaya placeholder "Memuat..." / splash tidak nyangkut selamanya.
   const READY_FALLBACK_MS = 8000;
-  const MIN_SPLASH_MS = 700;
+  const MIN_SPLASH_MS = 700; // splash tetap tampil minimal segini walau ready-nya lebih cepat, biar tidak "kedip"
 
   const wraps = {};
   document.querySelectorAll('.frame-wrap').forEach(w => wraps[w.dataset.tool] = w);
@@ -201,6 +204,8 @@
     setTimeout(() => markReady(name), READY_FALLBACK_MS);
   }
 
+  // Dipanggil saat tool mengirim postMessage({ __elitechReady: 'nama' }),
+  // atau saat fallback timeout tercapai.
   function markReady(name) {
     if (toolReady[name]) return;
     toolReady[name] = true;
@@ -239,6 +244,7 @@
     if (activeBtn) moveIndicator(activeBtn);
   });
 
+  /* ================= Splash → App reveal ================= */
   function revealApp() {
     if (splashRevealed) return;
     splashRevealed = true;
@@ -251,21 +257,14 @@
     }, wait);
   }
 
+  // Kalau fallback yang mentrigger reveal (bukan sinyal ready asli), ganti teks
+  // status splash biar jujur -- bukan pura-pura semua baik-baik saja.
   setTimeout(() => {
     if (!toolReady.katalog) splashStatus.textContent = 'Memuat lebih lama dari biasanya…';
   }, 3000);
 
   ensureFrame('katalog');
   moveIndicator(tabs[0]);
-
-  // Daftarkan service worker shell -- cuma meng-cache file shell sendiri
-  // (index.html, manifest.json), TIDAK meng-cache isi iframe (lihat
-  // penjelasan di sw.js masing-masing tool untuk itu).
-  if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => {
-      navigator.serviceWorker.register('./sw.js').catch(err => console.log('SW gagal daftar:', err));
-    });
-  }
 </script>
 </body>
 </html>
