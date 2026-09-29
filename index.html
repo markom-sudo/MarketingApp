@@ -303,6 +303,7 @@ function handleImgError(imgEl, wrapperTag){
    STATE
    ========================================================= */
 let masterProducts = [];   // SEMUA produk, dimuat sekali, sudah di-index untuk pencarian
+let byId = {};             // id -> produk (akses instan tanpa ke server)
 let allProducts = [];      // hasil filter/pencarian yang sedang tampil di grid
 let activeCategory = 'semua';
 let searchTerm = '';
@@ -314,12 +315,26 @@ const el = id => document.getElementById(id);
 /* =========================================================
    FETCH DATA
    ========================================================= */
-// Tanpa filter: pencarian & kategori dikerjakan di browser (lihat refreshGrid).
-async function loadList(){
-  const res = await fetch(API_BASE + '?action=list');
-  const data = await res.json();
-  return Array.isArray(data) ? data : [];
+// action=all membawa data LENGKAP (detail, varian, spek), jadi klik produk
+// tidak perlu menunggu server lagi. Kalau backend belum diperbarui, jatuh
+// balik ke action=list (data ringkas) dan detail diambil per klik.
+// Hasilnya disimpan di localStorage: kunjungan berikutnya tampil instan,
+// data terbaru diambil di belakang layar.
+const CACHE_KEY = 'elitech_katalog_v1';
+
+function isCatalogText(txt){
+  try { return Array.isArray(JSON.parse(txt)); } catch(e){ return false; }
 }
+async function fetchCatalogText(){
+  let txt = await (await fetch(API_BASE + '?action=all')).text();
+  if(!isCatalogText(txt)){
+    txt = await (await fetch(API_BASE + '?action=list')).text();
+    if(!isCatalogText(txt)) throw new Error('Respon server tidak valid');
+  }
+  return txt;
+}
+function cacheRead(){ try { return localStorage.getItem(CACHE_KEY); } catch(e){ return null; } }
+function cacheWrite(txt){ try { localStorage.setItem(CACHE_KEY, txt); } catch(e){} }
 
 async function loadDetail(id){
   const res = await fetch(API_BASE + '?action=detail&id=' + encodeURIComponent(id));
@@ -547,7 +562,26 @@ el('compare-view-btn').addEventListener('click', ()=> openCompareView([...compar
 /* =========================================================
    DETAIL
    ========================================================= */
+// Ukuran kecil untuk thumbnail galeri (URL googleusercontent berakhiran =wNNN).
+function smallImg(url){ return String(url || '').replace(/=w\d+$/, '=w160'); }
+
+function withModelLain(p){
+  return Object.assign({}, p, {
+    modelLain: masterProducts
+      .filter(x => x.namaDasar && x.namaDasar === p.namaDasar && x.id !== p.id)
+      .map(x => ({ id: x.id, model: x.model, thumbnail: x.thumbnail, hargaMin: x.hargaMin, hargaMax: x.hargaMax })),
+  });
+}
+
 async function openDetail(id){
+  const local = byId[id];
+  if(local && Array.isArray(local.varian)){
+    // Data sudah ada di browser -> tampil seketika, tanpa request.
+    switchView('detail', local.model, true);
+    renderDetail(withModelLain(local));
+    return;
+  }
+  // Cadangan: backend lama (data ringkas) -> ambil detail dari server.
   switchView('detail', '...', true);
   const p = await loadDetail(id);
   if(p.error){
@@ -614,7 +648,7 @@ function renderDetail(p){
 
   el('view-detail').innerHTML = `
     ${images.length
-      ? `<img id="hero-img" class="hero-img" src="${images[0]}" alt="${p.model}" onerror="handleImgError(this)">`
+      ? `<img id="hero-img" class="hero-img" src="${p.thumbnail || images[0]}" alt="${p.model}" onerror="handleImgError(this)">`
       : `<div class="hero-ph">${icon('box')}</div>`}
     ${images.length > 1 ? `<div id="gallery"></div>` : ''}
 
@@ -653,10 +687,19 @@ function renderDetail(p){
     ` : ''}
   `;
 
+  // hero: thumbnail (sudah ada di cache browser dari grid) tampil dulu,
+  // gambar besar dimuat di belakang layar lalu menggantikannya.
+  const heroEl = document.getElementById('hero-img');
+  if(heroEl && p.thumbnail && images[0] && p.thumbnail !== images[0]){
+    const big = new Image();
+    big.onload = ()=>{ if(document.body.contains(heroEl)) heroEl.src = images[0]; };
+    big.src = images[0];
+  }
+
   // gallery
   if(images.length > 1){
     const g = document.getElementById('gallery');
-    g.innerHTML = images.map((url,i)=>`<div class="thumb ${i===0?'active':''}" data-idx="${i}"><img src="${url}" onerror="this.style.display='none'"></div>`).join('');
+    g.innerHTML = images.map((url,i)=>`<div class="thumb ${i===0?'active':''}" data-idx="${i}"><img src="${smallImg(url)}" onerror="this.style.display='none'"></div>`).join('');
     g.querySelectorAll('.thumb').forEach(t=>{
       t.addEventListener('click', ()=>{
         g.querySelectorAll('.thumb').forEach(x=>x.classList.remove('active'));
@@ -801,7 +844,8 @@ async function openCompareView(ids){
     el('view-compare').innerHTML = '<p id="compare-empty">Belum ada produk dipilih. Tap ikon perbandingan pada kartu produk untuk mulai memilih.</p>';
     return;
   }
-  const items = await loadCompare(ids);
+  const local = ids.map(id => byId[id]).filter(p => p && Array.isArray(p.varian));
+  const items = local.length === ids.length ? local : await loadCompare(ids);
 
   // Gabungkan semua label spek unik dari SEMUA produk, urut kemunculan
   // pertama; produk yang tidak punya label itu tetap dapat baris ("-").
@@ -865,16 +909,40 @@ async function openCompareView(ids){
 /* =========================================================
    INIT
    ========================================================= */
-(async function init(){
-  try {
-    masterProducts = (await loadList()).map(indexProduct);
-    renderChips();
-    refreshGrid();
-  } catch (err) {
-    el('grid').innerHTML = '<p class="empty-state">Gagal memuat katalog. Periksa koneksi lalu muat ulang halaman.</p>';
-  }
-  // lapor ke shell (kalau dibuka di dalam iframe) bahwa grid pertama sudah selesai dirender
+function applyData(txt){
+  const data = JSON.parse(txt);
+  if(!Array.isArray(data)) throw new Error('Format data tidak valid');
+  masterProducts = data.map(indexProduct);
+  byId = {};
+  masterProducts.forEach(p => { byId[p.id] = p; });
+  renderChips();
+  refreshGrid();
+}
+
+// lapor ke shell (kalau dibuka di dalam iframe) bahwa grid pertama sudah tampil
+function notifyReady(){
   if (window.parent !== window) window.parent.postMessage({ __elitechReady: 'katalog' }, '*');
+}
+
+(async function init(){
+  // 1) Ada cache -> grid tampil SEKETIKA, tanpa menunggu server.
+  const cached = cacheRead();
+  if(cached){
+    try { applyData(cached); notifyReady(); } catch(e){ /* cache rusak, abaikan */ }
+  }
+  // 2) Ambil data terbaru di belakang layar; perbarui tampilan hanya kalau berubah.
+  try {
+    const fresh = await fetchCatalogText();
+    if(fresh !== cached){
+      applyData(fresh);
+      cacheWrite(fresh);
+    }
+  } catch (err) {
+    if(!masterProducts.length){
+      el('grid').innerHTML = '<p class="empty-state">Gagal memuat katalog. Periksa koneksi lalu muat ulang halaman.</p>';
+    }
+  }
+  notifyReady();
 })();
 </script>
 </body>
