@@ -18,6 +18,7 @@
     --brand:#364fab;--brand-dark:#2a3d87;--brand-fg:#ffffff;--brand-soft:#eef0f9;
     --surface:#f5f6f9;--border:#e6e8ee;--text:#14151a;--text-2:#6b7280;
     --tabbar-h:64px;--safe-b:env(safe-area-inset-bottom, 0px);
+    --rail-w:88px;
     --morph:0.5s cubic-bezier(.4,0,.2,1);
   }
   *{box-sizing:border-box;}
@@ -57,7 +58,7 @@
   .spinner{width:22px;height:22px;border-radius:50%;border:2.5px solid var(--border);border-top-color:var(--brand);animation:spin .7s linear infinite;}
   @keyframes spin{to{transform:rotate(360deg);}}
 
-  /* ================= TAB BAR ================= */
+  /* ================= TAB BAR (HP & tablet: di bawah) ================= */
   #tabbar{
     position:fixed;left:0;right:0;bottom:0;height:calc(var(--tabbar-h) + var(--safe-b));padding-bottom:var(--safe-b);
     display:flex;background:#ffffff;border-top:1px solid var(--border);box-shadow:0 -2px 10px rgba(20,21,26,0.04);z-index:10;
@@ -71,6 +72,28 @@
   .tab-btn span{font-size:11px;font-weight:500;transition:color var(--morph);}
   .tab-btn.active{color:var(--brand);}
   .tab-btn.active svg{transform:translateY(-1px) scale(1.08);}
+
+  /* ================= PC: sidebar di kiri ================= */
+  @media (min-width:1024px) and (pointer:fine){
+    #content{top:0;left:var(--rail-w);right:0;bottom:0;}
+
+    #tabbar{
+      top:0;bottom:0;left:0;right:auto;width:var(--rail-w);height:auto;
+      flex-direction:column;align-items:stretch;justify-content:flex-start;
+      padding:14px 0 0;border-top:none;border-right:1px solid var(--border);
+      box-shadow:2px 0 10px rgba(20,21,26,0.04);
+    }
+    #tabbar::before{
+      content:'E';display:flex;align-items:center;justify-content:center;
+      width:40px;height:40px;margin:0 auto 18px;border-radius:12px;
+      background:var(--brand);color:#fff;font-size:20px;font-weight:800;flex:none;
+    }
+    #tabIndicator{top:0;left:0;width:60px;height:56px;border-radius:14px;}
+    .tab-btn{flex:none;height:64px;padding:0;gap:4px;}
+    .tab-btn span{font-size:11.5px;}
+    .tab-btn:hover{color:var(--brand);}
+    .tab-btn.active svg{transform:scale(1.08);}
+  }
 
   @media (prefers-reduced-motion: reduce){
     *{animation-duration:.01ms !important;transition-duration:.01ms !important;}
@@ -133,6 +156,7 @@
   const tabs = Array.from(document.querySelectorAll('.tab-btn'));
   const indicator = document.getElementById('tabIndicator');
   const splashStatus = document.getElementById('splashStatus');
+  const DESKTOP_MQ = window.matchMedia('(min-width:1024px) and (pointer:fine)');
   let currentTool = 'katalog';
   const toolReady = { katalog: false, populasi: false, peta: false };
   const splashStart = Date.now();
@@ -141,8 +165,16 @@
   function moveIndicator(btn) {
     const barRect = btn.parentElement.getBoundingClientRect();
     const btnRect = btn.getBoundingClientRect();
-    const x = (btnRect.left - barRect.left) + (btnRect.width - indicator.offsetWidth) / 2;
-    indicator.style.transform = `translateX(${x}px)`;
+    if (DESKTOP_MQ.matches) {
+      // PC (sidebar): indikator bergerak vertikal
+      const x = (barRect.width - indicator.offsetWidth) / 2;
+      const y = (btnRect.top - barRect.top) + (btnRect.height - indicator.offsetHeight) / 2;
+      indicator.style.transform = `translate(${x}px, ${y}px)`;
+    } else {
+      // HP & tablet: indikator bergerak horizontal
+      const x = (btnRect.left - barRect.left) + (btnRect.width - indicator.offsetWidth) / 2;
+      indicator.style.transform = `translateX(${x}px)`;
+    }
   }
 
   function ensureFrame(name) {
