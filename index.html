@@ -16,8 +16,21 @@
      Preferensi ('auto' | 'light' | 'dark') disimpan di localStorage 'elitech_theme'. */
   (function () {
     var d = document.documentElement;
-    function pref() { try { return localStorage.getItem('elitech_theme') || 'auto'; } catch (e) { return 'auto'; } }
-    function resolve(p) { return p === 'auto' ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : p; }
+    /* ===== PENGATURAN MODE OTOMATIS =====
+       by   : 'jadwal' = gelap pada jam tertentu | 'sistem' = ikut tema HP/PC
+       from : jam mulai gelap (0-23), to : jam selesai gelap (0-23)
+       Contoh sekarang: gelap dari jam 17.00 sampai 07.00 pagi. */
+    window.__AUTO = { by: 'jadwal', from: 17, to: 7 };
+    function pref() { try { return localStorage.getItem('elitech_theme_mode') || localStorage.getItem('elitech_theme') || 'auto'; } catch (e) { return 'auto'; } }
+    function gelapJadwal() {
+      var h = new Date().getHours(), a = window.__AUTO;
+      return a.from > a.to ? (h >= a.from || h < a.to) : (h >= a.from && h < a.to);
+    }
+    function resolve(p) {
+      if (p !== 'auto') return p;
+      if (window.__AUTO.by === 'jadwal') return gelapJadwal() ? 'dark' : 'light';
+      return matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    }
     window.__setTheme = function (t) {
       d.setAttribute('data-theme', t === 'dark' ? 'dark' : 'light');
       var m = document.querySelector('meta[name="theme-color"]');
@@ -63,6 +76,9 @@
   html.vt-custom::view-transition-new(root){animation:none;mix-blend-mode:normal;}
   html.vt-custom::view-transition-old(root){z-index:1;}
   html.vt-custom::view-transition-new(root){z-index:2;}
+  /* selama pergantian tema, transisi warna bawaan dimatikan supaya foto "baru"
+     tidak terambil dalam keadaan warna setengah jadi (penyebab tampilan kasar) */
+  html.vt-run *, html.vt-run *::before, html.vt-run *::after{transition:none !important;}
   /* gaya 'soft': tepi lingkaran lembut (feather), seperti cahaya matahari */
   html.vt-soft::view-transition-new(root){
     -webkit-mask-image:radial-gradient(circle closest-side,#000 62%,transparent 100%);
@@ -276,10 +292,13 @@
   //   'random'  acak setiap kali ganti tema
   //   'none'    tanpa animasi
   const THEME_ANIM = 'circle';
-  const THEME_ANIM_MS = 650;      // lama animasi
+  const THEME_ANIM_MS = 1400;     // lama animasi (ms). 1000 = 1 detik, 2000 = 2 detik
+  const THEME_EASING = 'cubic-bezier(.65,0,.35,1)';   // lambat di awal, cepat di tengah, lambat di akhir
+  // Pengaturan mode Otomatis ada di <head> (window.__AUTO). Di sini hanya dibaca.
+  const AUTO_BY = window.__AUTO.by, DARK_FROM = window.__AUTO.from, DARK_TO = window.__AUTO.to;
   const THEME_SYNC_MS = 120;      // jeda singkat supaya iframe sempat berganti tema sebelum "foto baru" diambil
 
-  const LS_TAB = 'elitech_tab', LS_PRES = 'elitech_presentasi', LS_THEME = 'elitech_theme';
+  const LS_TAB = 'elitech_tab', LS_PRES = 'elitech_presentasi', LS_THEME = 'elitech_theme', LS_MODE = 'elitech_theme_mode';
   const lsGet = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
   const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} };
 
@@ -370,10 +389,25 @@
   const themeBtn = document.getElementById('themeBtn');
   const themeLabel = document.getElementById('themeLabel');
   const DARK_MQ = window.matchMedia('(prefers-color-scheme: dark)');
-  let themePref = THEME_ORDER.indexOf(lsGet(LS_THEME)) >= 0 ? lsGet(LS_THEME) : 'auto';
+  // Pilihan pengguna (auto/light/dark) disimpan di LS_MODE. LS_THEME berisi tema yang SEDANG berlaku
+  // (terang/gelap) supaya semua tool di iframe ikut tanpa perlu tahu jadwal.
+  const validMode = m => THEME_ORDER.indexOf(m) >= 0 ? m : null;
+  let themePref = validMode(lsGet(LS_MODE)) || validMode(lsGet(LS_THEME)) || 'auto';
 
+  function gelapJadwal() {
+    const h = new Date().getHours();
+    return DARK_FROM > DARK_TO ? (h >= DARK_FROM || h < DARK_TO) : (h >= DARK_FROM && h < DARK_TO);
+  }
   function resolveOf(pref) {
-    return pref === 'auto' ? (DARK_MQ.matches ? 'dark' : 'light') : pref;
+    if (pref !== 'auto') return pref;
+    if (AUTO_BY === 'jadwal') return gelapJadwal() ? 'dark' : 'light';
+    return DARK_MQ.matches ? 'dark' : 'light';
+  }
+  const jam = h => String(h).padStart(2, '0') + '.00';
+  function temaLabel(pref) {
+    return (pref === 'auto' && AUTO_BY === 'jadwal')
+      ? 'Otomatis (gelap ' + jam(DARK_FROM) + '–' + jam(DARK_TO) + ')'
+      : THEME_LABEL[pref];
   }
   function resolvedTheme() { return resolveOf(themePref); }
   function sendTheme(name) {
@@ -383,13 +417,16 @@
   }
   function applyTheme(pref, silent) {
     themePref = pref;
-    lsSet(LS_THEME, pref);
-    window.__setTheme(resolvedTheme());
+    const nyata = resolvedTheme();
+    lsSet(LS_MODE, pref);                                                   // pilihan pengguna
+    lsSet(LS_THEME, (pref === 'auto' && AUTO_BY === 'jadwal') ? nyata : pref); // tema yang berlaku (dibaca tool di iframe)
+    window.__setTheme(nyata);
     themeBtn.dataset.mode = pref;
     themeLabel.textContent = THEME_LABEL[pref];
-    themeBtn.setAttribute('aria-label', 'Tema: ' + THEME_LABEL[pref] + '. Ketuk untuk mengganti.');
+    themeBtn.title = 'Tema: ' + temaLabel(pref) + '. Ketuk untuk mengganti.';
+    themeBtn.setAttribute('aria-label', 'Tema: ' + temaLabel(pref) + '. Ketuk untuk mengganti.');
     Object.keys(TOOL_URLS).forEach(sendTheme);
-    if (!silent) flash('Tema: ' + THEME_LABEL[pref]);
+    if (!silent) flash('Tema: ' + temaLabel(pref));
   }
 
   // Daftar gerakan per gaya. 'new' = animasi foto baru, 'old' = animasi foto lama (hanya zoom/blur).
@@ -447,6 +484,7 @@
     const pool = CLIP_STYLES.concat(FX_STYLES);
     const style = THEME_ANIM === 'random' ? pool[Math.floor(Math.random() * pool.length)] : THEME_ANIM;
     const custom = pool.indexOf(style) >= 0;                     // 'fade' memakai crossfade bawaan browser
+    root.classList.add('vt-run');                                // matikan transisi warna bawaan selama pergantian
     if (custom) root.classList.add('vt-custom');
     if (style === 'soft') root.classList.add('vt-soft');
 
@@ -460,14 +498,14 @@
       transition.ready.then(() => {
         const anim = buildThemeAnim(style, x, y);
         if (!anim) return;
-        const opts = { duration: THEME_ANIM_MS, easing: 'cubic-bezier(.4,0,.2,1)' };
+        const opts = { duration: THEME_ANIM_MS, easing: THEME_EASING };
         root.animate(anim.new, Object.assign({ pseudoElement: '::view-transition-new(root)' }, opts));
         if (anim.old) root.animate(anim.old, Object.assign({ pseudoElement: '::view-transition-old(root)' }, opts));
       }).catch(() => {});
     }
     transition.finished.finally(() => {
-      root.classList.remove('vt-custom', 'vt-soft');
-      flash('Tema: ' + THEME_LABEL[pref]);
+      root.classList.remove('vt-run', 'vt-custom', 'vt-soft');
+      flash('Tema: ' + temaLabel(pref));
     });
   }
 
@@ -480,9 +518,21 @@
   themeBtn.addEventListener('animationend', () => themeBtn.classList.remove('spin'));
 
   // Mode Otomatis: ikuti perubahan tema sistem saat aplikasi terbuka
-  const onSystemTheme = () => { if (themePref === 'auto') applyTheme('auto', true); };
-  if (DARK_MQ.addEventListener) DARK_MQ.addEventListener('change', onSystemTheme);
-  else if (DARK_MQ.addListener) DARK_MQ.addListener(onSystemTheme);
+  if (AUTO_BY === 'sistem') {
+    const onSystemTheme = () => { if (themePref === 'auto') applyTheme('auto', true); };
+    if (DARK_MQ.addEventListener) DARK_MQ.addEventListener('change', onSystemTheme);
+    else if (DARK_MQ.addListener) DARK_MQ.addListener(onSystemTheme);
+  }
+
+  // Mode Otomatis berjadwal: cek berkala apakah sudah lewat jam pergantian
+  // (juga saat aplikasi dibuka kembali dari latar belakang).
+  function cekJadwal() {
+    if (AUTO_BY !== 'jadwal' || themePref !== 'auto') return;
+    if (resolveOf('auto') !== document.documentElement.getAttribute('data-theme')) applyTheme('auto', true);
+  }
+  setInterval(cekJadwal, 30 * 1000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) cekJadwal(); });
+  window.addEventListener('focus', cekJadwal);
 
   /* ---------- pesan kecil melayang (offline / versi baru / pasang) ---------- */
   const noticeEl = document.getElementById('notice');
