@@ -7,8 +7,12 @@
  *   markom-sudo.github.io/PetaDistributor/sw.js
  * Setiap aplikasi mendaftarkan sw.js miliknya sendiri; cakupan (scope) otomatis
  * mengikuti lokasinya, dan nama cache dipisah per scope supaya tidak bentrok.
- * Naikkan VERSION untuk memaksa semua perangkat mengambil ulang file. */
-const VERSION = 'v3';
+ * Naikkan VERSION untuk memaksa semua perangkat mengambil ulang file.
+ *
+ * Pemberitahuan versi baru: begitu halaman (index.html) di server ternyata berbeda
+ * dari salinan tersimpan, semua halaman yang terbuka diberi pesan {type:'ELITECH_UPDATE'}.
+ * Shell menampilkan banner "Versi baru tersedia" dari pesan ini. */
+const VERSION = 'v5';
 const SCOPE = self.registration.scope;                       // mis. https://.../product/
 const NS = 'elitech' + new URL(SCOPE).pathname.replace(/[^a-z0-9]+/gi, '_');
 const APP_CACHE = NS + '-app-' + VERSION;
@@ -60,15 +64,30 @@ self.addEventListener('fetch', e => {
   }
 });
 
+// Beri tahu semua halaman di scope ini bahwa ada versi baru di server.
+async function kabarUpdate() {
+  const cs = await self.clients.matchAll({ includeUncontrolled: true });
+  cs.forEach(c => c.postMessage({ type: 'ELITECH_UPDATE' }));
+}
+const cap = r => r && (r.headers.get('etag') || r.headers.get('last-modified'));
+
 // Tampilkan salinan tersimpan SEKETIKA, lalu perbarui di belakang layar.
-// Versi baru muncul pada pembukaan berikutnya.
+// Versi baru muncul pada pembukaan berikutnya (atau setelah pengguna menekan "Muat ulang").
 async function staleWhileRevalidate(e, req) {
   const isDoc = req.mode === 'navigate' || req.destination === 'iframe' || req.destination === 'document';
   const cache = await caches.open(APP_CACHE);
   const cached = await cache.match(req, { ignoreSearch: isDoc });
+  const capLama = cap(cached);
 
   const update = fetch(req).then(res => {
-    if (res && (res.ok || res.type === 'opaque')) cache.put(req, res.clone());
+    if (res && (res.ok || res.type === 'opaque')) {
+      cache.put(req, res.clone());
+      // dokumen utama berubah di server -> kabari halaman
+      if (isDoc && cached && res.ok) {
+        const capBaru = cap(res);
+        if (capLama && capBaru && capLama !== capBaru) kabarUpdate();
+      }
+    }
     return res;
   }).catch(() => null);
 
