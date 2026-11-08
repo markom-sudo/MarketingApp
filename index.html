@@ -56,6 +56,24 @@
   *{box-sizing:border-box;}
   html,body{margin:0;padding:0;height:100%;overflow:hidden;font-family:'Inter',-apple-system,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);}
 
+  /* ================= ANIMASI GANTI TEMA (View Transitions) =================
+     Hanya aktif untuk 'circle' dan 'slide' (kelas vt-custom dipasang lewat JS).
+     'fade' memakai crossfade bawaan browser. */
+  html.vt-custom::view-transition-old(root),
+  html.vt-custom::view-transition-new(root){animation:none;mix-blend-mode:normal;}
+  html.vt-custom::view-transition-old(root){z-index:1;}
+  html.vt-custom::view-transition-new(root){z-index:2;}
+  /* gaya 'soft': tepi lingkaran lembut (feather), seperti cahaya matahari */
+  html.vt-soft::view-transition-new(root){
+    -webkit-mask-image:radial-gradient(circle closest-side,#000 62%,transparent 100%);
+            mask-image:radial-gradient(circle closest-side,#000 62%,transparent 100%);
+    -webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;
+  }
+
+  /* ikon tombol Tema berputar sedikit saat diganti */
+  @keyframes themeSpin{from{transform:rotate(-90deg) scale(.5);opacity:.25;}to{transform:none;opacity:1;}}
+  #themeBtn.spin svg{animation:themeSpin .55s cubic-bezier(.2,.8,.2,1);}
+
   /* ================= SPLASH ================= */
   #splash{
     position:fixed;inset:0;z-index:100;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;
@@ -245,6 +263,22 @@
   const MIN_SPLASH_MS = 700;
   const PRELOAD_DELAY_MS = 1200; // jeda setelah katalog siap, sebelum tab lain dimuat diam-diam
 
+  // Gaya animasi ganti tema (pilih salah satu):
+  //   'circle'  lingkaran melebar dari tombol Tema (seperti matahari terbit)
+  //   'soft'    lingkaran dengan tepi lembut / berpendar
+  //   'diamond' belah ketupat melebar dari tombol Tema
+  //   'slide'   menyapu dari kiri ke kanan
+  //   'curtain' tirai turun dari atas
+  //   'rise'    naik dari bawah
+  //   'zoom'    zoom halus + memudar
+  //   'blur'    memudar dengan efek kabur
+  //   'fade'    crossfade bawaan browser
+  //   'random'  acak setiap kali ganti tema
+  //   'none'    tanpa animasi
+  const THEME_ANIM = 'circle';
+  const THEME_ANIM_MS = 650;      // lama animasi
+  const THEME_SYNC_MS = 120;      // jeda singkat supaya iframe sempat berganti tema sebelum "foto baru" diambil
+
   const LS_TAB = 'elitech_tab', LS_PRES = 'elitech_presentasi', LS_THEME = 'elitech_theme';
   const lsGet = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
   const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} };
@@ -338,9 +372,10 @@
   const DARK_MQ = window.matchMedia('(prefers-color-scheme: dark)');
   let themePref = THEME_ORDER.indexOf(lsGet(LS_THEME)) >= 0 ? lsGet(LS_THEME) : 'auto';
 
-  function resolvedTheme() {
-    return themePref === 'auto' ? (DARK_MQ.matches ? 'dark' : 'light') : themePref;
+  function resolveOf(pref) {
+    return pref === 'auto' ? (DARK_MQ.matches ? 'dark' : 'light') : pref;
   }
+  function resolvedTheme() { return resolveOf(themePref); }
   function sendTheme(name) {
     const f = frameOf(name);
     if (!f || !f.contentWindow) return;
@@ -356,9 +391,94 @@
     Object.keys(TOOL_URLS).forEach(sendTheme);
     if (!silent) flash('Tema: ' + THEME_LABEL[pref]);
   }
+
+  // Daftar gerakan per gaya. 'new' = animasi foto baru, 'old' = animasi foto lama (hanya zoom/blur).
+  const CLIP_STYLES = ['circle', 'soft', 'diamond', 'slide', 'curtain', 'rise'];
+  const FX_STYLES = ['zoom', 'blur'];
+  function buildThemeAnim(style, x, y) {
+    const W = innerWidth, H = innerHeight;
+    const R = Math.hypot(Math.max(x, W - x), Math.max(y, H - y));          // jarak ke sudut terjauh
+    switch (style) {
+      case 'circle':
+        return { new: { clipPath: [`circle(0px at ${x}px ${y}px)`, `circle(${R}px at ${x}px ${y}px)`] } };
+      case 'soft': {
+        const S = R * 3.4;                                                  // cukup besar agar bagian tepi lembut keluar layar
+        return { new: {
+          maskSize: ['0px 0px', `${S}px ${S}px`],
+          maskPosition: [`${x}px ${y}px`, `${x - S / 2}px ${y - S / 2}px`],
+        } };
+      }
+      case 'diamond': {
+        const D = Math.max(x, W - x) + Math.max(y, H - y);
+        const p = r => `polygon(${x - r}px ${y}px, ${x}px ${y - r}px, ${x + r}px ${y}px, ${x}px ${y + r}px)`;
+        return { new: { clipPath: [p(0), p(D)] } };
+      }
+      case 'slide':
+        return { new: { clipPath: ['inset(0 100% 0 0)', 'inset(0 0 0 0)'] } };
+      case 'curtain':
+        return { new: { clipPath: ['inset(0 0 100% 0)', 'inset(0 0 0 0)'] } };
+      case 'rise':
+        return { new: { clipPath: ['inset(100% 0 0 0)', 'inset(0 0 0 0)'] } };
+      case 'zoom':
+        return {
+          new: { opacity: [0, 1], transform: ['scale(1.08)', 'scale(1)'] },
+          old: { opacity: [1, 0], transform: ['scale(1)', 'scale(.94)'] },
+        };
+      case 'blur':
+        return {
+          new: { opacity: [0, 1], filter: ['blur(16px)', 'blur(0px)'] },
+          old: { opacity: [1, 0], filter: ['blur(0px)', 'blur(16px)'] },
+        };
+      default:
+        return null;
+    }
+  }
+
+  // Ganti tema dengan animasi. Seluruh layar (termasuk isi iframe) difoto dulu,
+  // tema diganti, lalu foto baru "dibuka" di atas foto lama dengan bentuk pilihan.
+  function applyThemeAnimated(pref, x, y) {
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const berubah = resolveOf(pref) !== resolvedTheme();       // mis. Otomatis -> Terang di perangkat terang: tidak ada yang berubah
+    if (THEME_ANIM === 'none' || reduce || !berubah || !document.startViewTransition) {
+      applyTheme(pref);
+      return;
+    }
+    const root = document.documentElement;
+    const pool = CLIP_STYLES.concat(FX_STYLES);
+    const style = THEME_ANIM === 'random' ? pool[Math.floor(Math.random() * pool.length)] : THEME_ANIM;
+    const custom = pool.indexOf(style) >= 0;                     // 'fade' memakai crossfade bawaan browser
+    if (custom) root.classList.add('vt-custom');
+    if (style === 'soft') root.classList.add('vt-soft');
+
+    const transition = document.startViewTransition(async () => {
+      applyTheme(pref, true);
+      // beri waktu iframe menerima pesan & menggambar ulang sebelum foto baru diambil
+      await new Promise(res => setTimeout(res, THEME_SYNC_MS));
+    });
+
+    if (custom) {
+      transition.ready.then(() => {
+        const anim = buildThemeAnim(style, x, y);
+        if (!anim) return;
+        const opts = { duration: THEME_ANIM_MS, easing: 'cubic-bezier(.4,0,.2,1)' };
+        root.animate(anim.new, Object.assign({ pseudoElement: '::view-transition-new(root)' }, opts));
+        if (anim.old) root.animate(anim.old, Object.assign({ pseudoElement: '::view-transition-old(root)' }, opts));
+      }).catch(() => {});
+    }
+    transition.finished.finally(() => {
+      root.classList.remove('vt-custom', 'vt-soft');
+      flash('Tema: ' + THEME_LABEL[pref]);
+    });
+  }
+
   themeBtn.addEventListener('click', () => {
-    applyTheme(THEME_ORDER[(THEME_ORDER.indexOf(themePref) + 1) % THEME_ORDER.length]);
+    const next = THEME_ORDER[(THEME_ORDER.indexOf(themePref) + 1) % THEME_ORDER.length];
+    const r = themeBtn.getBoundingClientRect();
+    themeBtn.classList.remove('spin'); void themeBtn.offsetWidth; themeBtn.classList.add('spin');
+    applyThemeAnimated(next, r.left + r.width / 2, r.top + r.height / 2);
   });
+  themeBtn.addEventListener('animationend', () => themeBtn.classList.remove('spin'));
+
   // Mode Otomatis: ikuti perubahan tema sistem saat aplikasi terbuka
   const onSystemTheme = () => { if (themePref === 'auto') applyTheme('auto', true); };
   if (DARK_MQ.addEventListener) DARK_MQ.addEventListener('change', onSystemTheme);
