@@ -12,7 +12,7 @@
  * Pemberitahuan versi baru: begitu halaman (index.html) di server ternyata berbeda
  * dari salinan tersimpan, semua halaman yang terbuka diberi pesan {type:'ELITECH_UPDATE'}.
  * Shell menampilkan banner "Versi baru tersedia" dari pesan ini. */
-const VERSION = 'v6';
+const VERSION = 'v7';
 const SCOPE = self.registration.scope;                       // mis. https://.../product/
 const NS = 'elitech' + new URL(SCOPE).pathname.replace(/[^a-z0-9]+/gi, '_');
 const APP_CACHE = NS + '-app-' + VERSION;
