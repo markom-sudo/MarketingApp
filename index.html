@@ -313,6 +313,35 @@
   const splashStart = Date.now();
   let splashRevealed = false;
 
+  /* =========================================================
+     LINK LANGSUNG (deep link)
+     Bentuk hash:  #katalog   #peta   #populasi
+                   #katalog/produk/<id>   (id di-encodeURIComponent)
+     - Saat dibuka: bagian setelah "/" diteruskan ke katalog lewat postMessage.
+     - Saat pengguna berpindah halaman di katalog: katalog melapor ({__elitechNav}),
+       shell memperbarui hash (replaceState, tanpa menambah riwayat).
+     ========================================================= */
+  let katalogPath = '';          // path terakhir yang dilaporkan katalog (tanpa tanda #)
+  let pendingGoto = null;        // path yang menunggu katalog siap
+  let katalogListening = false;  // true setelah katalog mengirim __elitechReady yang asli
+
+  function parseHash() {
+    const raw = location.hash.replace(/^#/, '');
+    const i = raw.indexOf('/');
+    return { tool: i < 0 ? raw : raw.slice(0, i), path: i < 0 ? '' : raw.slice(i + 1) };
+  }
+  function hashFor(name) {
+    return '#' + name + ((name === 'katalog' && katalogPath) ? '/' + katalogPath : '');
+  }
+  function syncHash() {
+    try { history.replaceState(history.state, '', hashFor(currentTool)); } catch (e) {}
+  }
+  function sendGoto(path) {
+    const f = frameOf('katalog');
+    if (!f || !f.contentWindow) { pendingGoto = path; return; }
+    f.contentWindow.postMessage({ __elitech: 'goto', path: path }, toolOrigin('katalog'));
+  }
+
   function moveIndicator(btn) {
     const barRect = btn.parentElement.getBoundingClientRect();
     const btnRect = btn.getBoundingClientRect();
@@ -335,6 +364,8 @@
     iframe.className = 'tool-frame';
     iframe.src = TOOL_URLS[name];
     iframe.title = name;
+    iframe.allow = 'web-share; clipboard-write; fullscreen';   // tombol Bagikan, salin link, layar penuh 360/3D
+    iframe.setAttribute('allowfullscreen', '');
     // Tab selain katalog: anggap siap begitu halamannya selesai dimuat
     // (katalog menunggu sinyal __elitechReady dari dalam, supaya splash
     // baru hilang setelah grid produk benar-benar tampil).
@@ -368,10 +399,12 @@
   function toolOrigin(name) {
     try { return new URL(TOOL_URLS[name]).origin; } catch (e) { return '*'; }
   }
+  // 'shell' = alamat halaman shell ini; dipakai tool untuk membuat link bagikan
+  const SHELL_URL = location.origin + location.pathname;
   function sendMode(name) {
     const f = frameOf(name);
     if (!f || !f.contentWindow) return;
-    f.contentWindow.postMessage({ __elitech: 'mode', presentasi: presentasi }, toolOrigin(name));
+    f.contentWindow.postMessage({ __elitech: 'mode', presentasi: presentasi, shell: SHELL_URL }, toolOrigin(name));
   }
   function applyPresentasi(on, silent) {
     presentasi = !!on;
@@ -592,10 +625,23 @@
       markReady(data.__elitechReady);
       sendMode(from);                            // tool baru siap -> beri tahu status presentasi
       sendTheme(from);                           // ... dan tema yang sedang dipakai
+      if (from === 'katalog') {
+        katalogListening = true;
+        if (pendingGoto !== null) {              // ada link langsung yang menunggu
+          const p = pendingGoto;
+          pendingGoto = null;
+          sendGoto(p);
+        }
+      }
     }
     if (data.__elitechBadge && data.__elitechBadge.tool === 'katalog') {
       const n = Number(data.__elitechBadge.n) || 0, b = document.getElementById('badgeKatalog');
       b.textContent = n; b.classList.toggle('show', n > 0);
+    }
+    // katalog melapor halaman yang sedang dibuka -> perbarui hash supaya URL selalu bisa dibagikan
+    if (from === 'katalog' && data.__elitechNav && typeof data.__elitechNav.path === 'string') {
+      katalogPath = data.__elitechNav.path;
+      if (currentTool === 'katalog') syncHash();
     }
   });
 
@@ -615,13 +661,24 @@
 
     currentTool = name;
     lsSet(LS_TAB, name);
-    try { history.replaceState(history.state, '', '#' + name); } catch (e) {}
+    syncHash();
   }
 
   tabs.forEach(btn => btn.addEventListener('click', () => openTool(btn.dataset.tool)));
   window.addEventListener('resize', () => {
     const activeBtn = tabs.find(t => t.dataset.tool === currentTool);
     if (activeBtn) moveIndicator(activeBtn);
+  });
+
+  // Hash diubah manual (mis. menempel link baru di tab yang sudah terbuka)
+  window.addEventListener('hashchange', () => {
+    const h = parseHash();
+    if (!TOOL_URLS[h.tool]) return;
+    if (h.tool === 'katalog') {
+      katalogPath = h.path;
+      if (katalogListening) sendGoto(h.path); else pendingGoto = h.path;
+    }
+    if (h.tool !== currentTool) openTool(h.tool);
   });
 
   function revealApp() {
@@ -646,10 +703,14 @@
   applyTheme(themePref, true);
   setOffline();
 
-  // buka tab terakhir / dari link (#peta)
+  // buka tab terakhir / dari link (#peta, #katalog/produk/<id>)
   (function () {
-    const h = location.hash.replace('#', ''), saved = lsGet(LS_TAB);
-    const start = TOOL_URLS[h] ? h : (TOOL_URLS[saved] ? saved : 'katalog');
+    const h = parseHash(), saved = lsGet(LS_TAB);
+    if (h.tool === 'katalog' && h.path) {          // link langsung ke halaman di dalam katalog
+      katalogPath = h.path;
+      pendingGoto = h.path;
+    }
+    const start = TOOL_URLS[h.tool] ? h.tool : (TOOL_URLS[saved] ? saved : 'katalog');
     if (start !== 'katalog') openTool(start);
   })();
 
